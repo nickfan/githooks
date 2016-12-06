@@ -1,0 +1,158 @@
+#!/bin/bash
+# PHP CodeSniffer pre-commit hook for git
+#
+# @author Soenke Ruempler <soenke@ruempler.eu>
+# @author Sebastian Kaspari <s.kaspari@googlemail.com>
+#
+# see the README
+
+PHPCS_BIN=vendor/bin/phpcs
+PHPCBF_BIN=vendor/bin/phpcbf
+PHPCS_CODING_STANDARD=PSR2
+PHPCS_IGNORE=
+PHPCS_AUTOFIX=1
+# parse config
+CONFIG_FILE=$(dirname $0)/phpcs_config
+if [ -e $CONFIG_FILE ]; then
+    . $CONFIG_FILE
+fi
+
+phpcs_local_exec="phpcs.phar"
+phpcs_command="php $phpcs_local_exec"
+phpcs_vendor_command="vendor/bin/phpcs"
+phpcs_global_command="phpcs"
+phpcs_spec_command=$PHPCS_BIN
+
+phpcbf_local_exec="phpcbf.phar"
+phpcbf_command="php $phpcbf_local_exec"
+phpcbf_vendor_command="vendor/bin/phpcbf"
+phpcbf_global_command="phpcbf"
+phpcbf_spec_command=$PHPCBF_BIN
+
+if [ -f "$phpcs_vendor_command" ]; then
+	phpcs_command=$phpcs_vendor_command
+else
+    if hash phpcs 2>/dev/null; then
+        phpcs_command=$phpcs_global_command
+    else
+        if [ -f "$phpcs_local_exec" ]; then
+            phpcs_command=$phpcs_command
+        else
+            if [ ! -x $phpcs_spec_command ]; then
+                echo "No valid PHP Codesniffer executable found! Please have one available as either $phpcs_vendor_command, $phpcs_global_command or $phpcs_local_exec or $phpcs_spec_command"
+                exit 1
+            else
+                phpcs_command=$phpcs_spec_command
+            fi
+        fi
+    fi
+fi
+
+if [ $PHPCS_AUTOFIX -ne 0 ]; then
+    if [ -f "$phpcbf_vendor_command" ]; then
+        phpcbf_command=$phpcbf_vendor_command
+    else
+        if hash phpcbf 2>/dev/null; then
+            phpcbf_command=$phpcbf_global_command
+        else
+            if [ -f "$phpcbf_local_exec" ]; then
+                phpcbf_command=$phpcbf_command
+            else
+                if [ ! -x $phpcbf_spec_command ]; then
+                    echo "No valid PHP Code Beautifier and Fixer executable found! Please have one available as either $phpcbf_vendor_command, $phpcbf_global_command or $phpcbf_local_exec or $phpcbf_spec_command"
+                    exit 1
+                else
+                    phpcbf_command=$phpcbf_spec_command
+                fi
+            fi
+        fi
+    fi
+fi
+
+
+# stolen from template file
+if git rev-parse --verify HEAD
+then
+    against=HEAD
+else
+    # Initial commit: diff against an empty tree object
+    against=4b825dc642cb6eb9a060e54bf8d69288fbee4904
+fi
+
+# this is the magic:
+# retrieve all files in staging area that are added, modified or renamed
+# but no deletions etc
+FILES=$(git diff-index --name-only --cached --diff-filter=ACMR $against -- )
+
+if [ "$FILES" == "" ]; then
+    exit 0
+fi
+
+# match files against whitelist
+FILES_TO_CHECK=""
+for FILE in $FILES
+do
+    echo "$FILE" | egrep -q "$PHPCS_FILE_PATTERN"
+    RETVAL=$?
+    if [ "$RETVAL" -eq "0" ]
+    then
+        FILES_TO_CHECK="$FILES_TO_CHECK $FILE"
+    fi
+done
+
+if [ "$FILES_TO_CHECK" == "" ]; then
+    exit 0
+fi
+
+# execute the code sniffer
+if [ "$PHPCS_IGNORE" != "" ]; then
+    IGNORE="--ignore=$PHPCS_IGNORE"
+else
+    IGNORE=""
+fi
+
+if [ "$PHPCS_SNIFFS" != "" ]; then
+    SNIFFS="--sniffs=$PHPCS_SNIFFS"
+else
+    SNIFFS=""
+fi
+
+if [ "$PHPCS_ENCODING" != "" ]; then
+    ENCODING="--encoding=$PHPCS_ENCODING"
+else
+    ENCODING=""
+fi
+
+if [ "$PHPCS_IGNORE_WARNINGS" == "1" ]; then
+    IGNORE_WARNINGS="-n"
+else
+    IGNORE_WARNINGS=""
+fi
+
+if [ "$FILES_TO_CHECK" != "" ]
+then
+	echo "Running Code Sniffer..."
+	PHPCS_OUTPUT_FIRST=$($phpcs_command -s $IGNORE_WARNINGS --standard=$PHPCS_CODING_STANDARD $ENCODING $IGNORE $SNIFFS $FILES_TO_CHECK)
+    RETVAL=$?
+    if [ $RETVAL -ne 0 ]; then
+        echo "Coding standards errors have been detected."
+        if [ $PHPCS_AUTOFIX -ne 0 ]; then
+            echo "$PHPCS_OUTPUT_FIRST"
+            echo "Running phpcbf..."
+            PHPCBF_OUTPUT=$($phpcbf_command --standard=$PHPCS_CODING_STANDARD $ENCODING $IGNORE $SNIFFS $FILES_TO_CHECK)
+            git add $FILES_TO_CHECK
+            echo "Running Code Sniffer again..."
+            PHPCS_OUTPUT_SECOND=$($phpcs_command -s $IGNORE_WARNINGS --standard=$PHPCS_CODING_STANDARD $ENCODING $IGNORE $SNIFFS $FILES_TO_CHECK)
+            RETVAL=$?
+            if [ $RETVAL -ne 0 ]; then
+                echo "Errors found not fixable automatically"
+                echo "$PHPCS_OUTPUT_SECOND" | less
+                exit 1
+            fi
+        else
+            echo "$PHPCS_OUTPUT_FIRST" | less
+            exit 1
+        fi
+    fi
+    exit $RETVAL
+fi
