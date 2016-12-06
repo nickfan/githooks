@@ -23,3 +23,12 @@
 * `PHPCBF_BIN` 指定 phpcbf可执行代码的完整路径
 * `PHPCS_CODING_STANDARD` 指定phpcs所使用的编码规范（默认PSR2）
 
+#### 其他说明
+
+* 项目内安装phpcs,phpcbf,composer.json配置文件的require-dev段 中加入:
+```
+    "require-dev": [
+        "squizlabs/php_codesniffer": "2.0.*@dev"
+    ],
+```
+即可使用 vendor/bin/phpcs工具
